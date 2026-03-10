@@ -4,10 +4,11 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, CheckCircle } from "lucide-react";
+import { CalendarIcon, CheckCircle, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 const services = [
   "Root Canal Treatment",
@@ -29,19 +30,57 @@ const timeSlots = [
 
 const BookAppointment = () => {
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     name: "", phone: "", email: "", service: "", time: "",
   });
   const [date, setDate] = useState<Date>();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.phone.trim() || !form.email.trim() || !form.service || !date || !form.time) {
       toast.error("Please fill all fields");
       return;
     }
-    setSubmitted(true);
-    toast.success("Appointment booked successfully!");
+
+    setLoading(true);
+    try {
+      // Save appointment to database
+      const formattedDate = format(date, "yyyy-MM-dd");
+      const { error } = await supabase.from("appointments").insert({
+        patient_name: form.name.trim(),
+        patient_phone: form.phone.trim(),
+        patient_email: form.email.trim(),
+        service: form.service,
+        appointment_date: formattedDate,
+        appointment_time: form.time,
+      });
+
+      if (error) {
+        console.error("Database error:", error);
+        toast.error("Failed to book appointment. Please try again.");
+        return;
+      }
+
+      // Send confirmation email (non-blocking)
+      supabase.functions.invoke("send-booking-confirmation", {
+        body: {
+          patientName: form.name.trim(),
+          patientEmail: form.email.trim(),
+          service: form.service,
+          appointmentDate: format(date, "PPP"),
+          appointmentTime: form.time,
+        },
+      }).catch((err) => console.error("Email error:", err));
+
+      setSubmitted(true);
+      toast.success("Appointment booked successfully!");
+    } catch (err) {
+      console.error("Booking error:", err);
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (submitted) {
@@ -83,22 +122,22 @@ const BookAppointment = () => {
               <div className="grid sm:grid-cols-2 gap-5">
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Full Name *</label>
-                  <Input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} />
+                  <Input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} disabled={loading} />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Phone Number *</label>
-                  <Input placeholder="+91 XXXXX XXXXX" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} maxLength={15} />
+                  <Input placeholder="+91 XXXXX XXXXX" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} maxLength={15} disabled={loading} />
                 </div>
               </div>
 
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Email Address *</label>
-                <Input type="email" placeholder="you@email.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} maxLength={255} />
+                <Input type="email" placeholder="you@email.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} maxLength={255} disabled={loading} />
               </div>
 
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Select Service *</label>
-                <Select value={form.service} onValueChange={(v) => setForm({ ...form, service: v })}>
+                <Select value={form.service} onValueChange={(v) => setForm({ ...form, service: v })} disabled={loading}>
                   <SelectTrigger><SelectValue placeholder="Choose a service" /></SelectTrigger>
                   <SelectContent>
                     {services.map((s) => (
@@ -113,7 +152,7 @@ const BookAppointment = () => {
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Preferred Date *</label>
                   <Popover>
                     <PopoverTrigger asChild>
-                      <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}>
+                      <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")} disabled={loading}>
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {date ? format(date, "PPP") : "Pick a date"}
                       </Button>
@@ -132,7 +171,7 @@ const BookAppointment = () => {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Preferred Time *</label>
-                  <Select value={form.time} onValueChange={(v) => setForm({ ...form, time: v })}>
+                  <Select value={form.time} onValueChange={(v) => setForm({ ...form, time: v })} disabled={loading}>
                     <SelectTrigger><SelectValue placeholder="Select time" /></SelectTrigger>
                     <SelectContent>
                       {timeSlots.map((t) => (
@@ -143,8 +182,15 @@ const BookAppointment = () => {
                 </div>
               </div>
 
-              <Button variant="hero" size="lg" type="submit" className="w-full h-12 text-base">
-                Confirm Appointment
+              <Button variant="hero" size="lg" type="submit" className="w-full h-12 text-base" disabled={loading}>
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Booking...
+                  </>
+                ) : (
+                  "Confirm Appointment"
+                )}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
                 By booking, you agree to our terms. We'll confirm via email and SMS.
